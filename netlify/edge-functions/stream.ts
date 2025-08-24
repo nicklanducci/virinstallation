@@ -1,18 +1,16 @@
 // netlify/edge-functions/stream.ts
-
 export default async (req: Request) => {
   const url = new URL(req.url);
 
-  // 🔑 Project API key (sk-proj-...) from the SAME project as your assistant
-  const key = Deno.env.get("OPENAI_API_KEY") || "";
+  // ---- ENV ----
+  const key = Deno.env.get("OPENAI_API_KEY") || "";      // sk-proj-...
+  const project = Deno.env.get("OPENAI_PROJECT") || "";  // proj_...
+  const org = Deno.env.get("OPENAI_ORG_ID") || "";       // optional
   const assistantId =
     Deno.env.get("ASSISTANT_ID") ||
     url.searchParams.get("assistant_id") ||
     "";
   const prompt = url.searchParams.get("prompt") ?? "Say hello!";
-
-  // Optional: if you are in an org/team
-  const org = Deno.env.get("OPENAI_ORG_ID") || "";
 
   // ---- SSE helpers ----
   const sse = (obj: unknown) =>
@@ -24,22 +22,39 @@ export default async (req: Request) => {
     });
 
   // ---- Guards ----
-  if (!key) {
-    return sseError("Missing OPENAI_API_KEY (use a project key: sk-proj-...)");
-  }
-  if (!assistantId) {
-    return sseError("Missing ASSISTANT_ID (set env var or pass ?assistant_id=asst_...)");
-  }
+  if (!key) return sseError("Missing OPENAI_API_KEY (use a project key: sk-proj-...)");
+  if (!assistantId) return sseError("Missing ASSISTANT_ID (env or ?assistant_id=asst_...)");
+  if (!project) return sseError("Missing OPENAI_PROJECT (proj_...) — set it to the Project that owns the assistant");
 
-  // ---- Correct headers for Assistants v2 ----
+  // ---- Common headers (Assistants v2 + explicit project context) ----
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${key}`,
     "Content-Type": "application/json",
-    "OpenAI-Beta": "assistants=v2",  // 👈 this tells API to accept assistant_id
+    "OpenAI-Beta": "assistants=v2",
+    "OpenAI-Project": project,     // 👈 make the request run in the right project
   };
   if (org) headers["OpenAI-Organization"] = org;
 
-  // ---- Call Responses API with assistant_id ----
+  // ---- 1) VERIFY the assistant is visible in THIS project ----
+  try {
+    const check = await fetch(`https://api.openai.com/v1/assistants/${assistantId}`, {
+      method: "GET",
+      headers,
+    });
+
+    if (!check.ok) {
+      const body = await check.text().catch(() => "");
+      return sseError(
+        `Assistant check failed for ${assistantId}. status=${check.status}. ` +
+        `Hint: The assistant may not belong to Project ${project} or your key is from a different project. ` +
+        `Body=${body || "no body"}`
+      );
+    }
+  } catch (e) {
+    return sseError(`Network error checking assistant: ${String(e)}`);
+  }
+
+  // ---- 2) STREAM from that assistant via /v1/responses ----
   let upstream: Response;
   try {
     upstream = await fetch("https://api.openai.com/v1/responses", {
@@ -63,7 +78,7 @@ export default async (req: Request) => {
     );
   }
 
-  // ---- Pass through the stream ----
+  // ---- 3) Pass through SSE and append [DONE] ----
   const body = new ReadableStream({
     async start(controller) {
       const reader = upstream.body!.getReader();
