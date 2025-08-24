@@ -1,16 +1,18 @@
 // netlify/edge-functions/stream.ts
+
 export default async (req: Request) => {
   const url = new URL(req.url);
 
-  // ---- Read inputs / env ----
+  // 🔑 Project API key (sk-proj-...) from the SAME project as your assistant
   const key = Deno.env.get("OPENAI_API_KEY") || "";
-  const project = Deno.env.get("OPENAI_PROJECT") || "";   // proj_...
-  const org = Deno.env.get("OPENAI_ORG_ID") || "";        // org_... (optional)
   const assistantId =
     Deno.env.get("ASSISTANT_ID") ||
     url.searchParams.get("assistant_id") ||
     "";
   const prompt = url.searchParams.get("prompt") ?? "Say hello!";
+
+  // Optional: if you are in an org/team
+  const org = Deno.env.get("OPENAI_ORG_ID") || "";
 
   // ---- SSE helpers ----
   const sse = (obj: unknown) =>
@@ -26,39 +28,18 @@ export default async (req: Request) => {
     return sseError("Missing OPENAI_API_KEY (use a project key: sk-proj-...)");
   }
   if (!assistantId) {
-    return sseError("Missing ASSISTANT_ID (env or ?assistant_id=asst_...)");
-  }
-  if (!project) {
-    return sseError("Missing OPENAI_PROJECT (proj_...) — set this to the Project ID that owns the assistant.");
+    return sseError("Missing ASSISTANT_ID (set env var or pass ?assistant_id=asst_...)");
   }
 
-  // ---- Common headers (Assistants v2 is required) ----
+  // ---- Correct headers for Assistants v2 ----
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${key}`,
     "Content-Type": "application/json",
-    "OpenAI-Beta": "assistants=v2",
-    "OpenAI-Project": project, // ensure the request runs in the right Project
+    "OpenAI-Beta": "assistants=v2",  // 👈 this tells API to accept assistant_id
   };
   if (org) headers["OpenAI-Organization"] = org;
 
-  // ---- 1) Verify the assistant is visible in this Project ----
-  try {
-    const check = await fetch(`https://api.openai.com/v1/assistants/${assistantId}`, {
-      method: "GET",
-      headers,
-    });
-
-    if (!check.ok) {
-      const body = await check.text().catch(() => "");
-      return sseError(
-        `Assistant check failed. status=${check.status}. Hint: The assistant may not belong to Project ${project}. Body=${body || "no body"}`
-      );
-    }
-  } catch (e) {
-    return sseError(`Network error checking assistant: ${String(e)}`);
-  }
-
-  // ---- 2) Stream a response from that Assistant ----
+  // ---- Call Responses API with assistant_id ----
   let upstream: Response;
   try {
     upstream = await fetch("https://api.openai.com/v1/responses", {
@@ -75,15 +56,14 @@ export default async (req: Request) => {
   }
 
   if (!upstream.ok || !upstream.body) {
-    const body = await upstream.text().catch(() => "");
-    // Surface the upstream error cleanly so you can see it in the browser
+    const text = await upstream.text().catch(() => "");
     return new Response(
-      sse({ upstream_status: upstream.status, error: body || "Upstream error" }) + sse("[DONE]"),
+      sse({ upstream_status: upstream.status, error: text || "Upstream error" }) + sse("[DONE]"),
       { headers: { "Content-Type": "text/event-stream" } }
     );
   }
 
-  // ---- 3) Pass through OpenAI's SSE + emit [DONE] ----
+  // ---- Pass through the stream ----
   const body = new ReadableStream({
     async start(controller) {
       const reader = upstream.body!.getReader();
