@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Live Text</title>
+  <style>
+    @font-face {
+      font-family: "InstallationFace";
+      src: url("/fonts/YourFont.woff2") format("woff2");
+    }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: #000; color: #fff;
+      display: grid; place-items: center;
+      font-family: "InstallationFace", sans-serif;
+    }
+    .line {
+      font-size: clamp(28px, 6vw, 120px);
+      white-space: pre-wrap;
+      text-align: center;
+      max-width: 90vw;
+    }
+    .cursor::after { content: "▌"; animation: blink 1s step-end infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+  </style>
+</head>
+<body>
+  <div id="out" class="line cursor"></div>
+  <script>
+    const prompt = "Give me a single haunting line about the wind.";
+    const out = document.getElementById("out");
+    const es = new EventSource(`/stream?prompt=${encodeURIComponent(prompt)}`);
+
+    es.onmessage = (e) => {
+      if (e.data === "[DONE]") { es.close(); out.classList.remove("cursor"); return; }
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "response.output_text.delta" && typeof msg.delta === "string") {
+          out.textContent += msg.delta;
+        }
+        if (msg.type === "response.completed") {
+          es.close();
+          out.classList.remove("cursor");
+        }
+      } catch {}
+    };
+  </script>
+</body>
+</html>
