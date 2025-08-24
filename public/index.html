@@ -26,24 +26,38 @@
 </head>
 <body>
   <div id="out" class="line cursor"></div>
-  <script>
-    const prompt = "Give me a single haunting line about the wind.";
-    const out = document.getElementById("out");
-    const es = new EventSource(`/stream?prompt=${encodeURIComponent(prompt)}`);
+<script>
+  const prompt = "Give me a single haunting line about the wind.";
+  const out = document.getElementById("out");
+  const es = new EventSource(`/stream?prompt=${encodeURIComponent(prompt)}`);
 
-    es.onmessage = (e) => {
-      if (e.data === "[DONE]") { es.close(); out.classList.remove("cursor"); return; }
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "response.output_text.delta" && typeof msg.delta === "string") {
-          out.textContent += msg.delta;
-        }
-        if (msg.type === "response.completed") {
-          es.close();
-          out.classList.remove("cursor");
-        }
-      } catch {}
-    };
-  </script>
+  // 1) Handle default 'message' events (in case your function normalizes later)
+  es.onmessage = (e) => {
+    if (e.data === "[DONE]") { es.close(); out.classList.remove("cursor"); return; }
+    try {
+      const msg = JSON.parse(e.data);
+      if (typeof msg.delta === "string") out.textContent += msg.delta;  // our normalized format
+      if (msg.error) out.textContent += `\n[error] ${msg.error}`;
+    } catch {}
+  };
+
+  // 2) Handle OpenAI's named events directly (what you're seeing now)
+  es.addEventListener("response.output_text.delta", (e) => {
+    const msg = JSON.parse(e.data);
+    if (typeof msg.delta === "string") out.textContent += msg.delta;
+  });
+
+  es.addEventListener("response.completed", () => {
+    es.close();
+    out.classList.remove("cursor");
+  });
+
+  // Optional: show other messages for debugging
+  es.addEventListener("response.created", (e) => console.log("created", e.data));
+  es.addEventListener("response.in_progress", (e) => console.log("progress", e.data));
+  es.addEventListener("response.output_text.done", (e) => console.log("done", e.data));
+
+  es.onerror = () => { out.classList.remove("cursor"); out.textContent += "\n[stream error]"; es.close(); };
+</script>
 </body>
 </html>
