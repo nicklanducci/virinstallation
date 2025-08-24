@@ -2,7 +2,7 @@ export default async (req: Request) => {
   const url = new URL(req.url);
 
   const key = Deno.env.get("OPENAI_API_KEY");
-  const assistantId = Deno.env.get("asst_xDIXyou1oF7Oq7Fgqs8mVN3r") // or read from query (?assistant_id=...)
+  const assistantId = Deno.env.get("ASSISTANT_ID") // or read from query (?assistant_id=...)
     || url.searchParams.get("assistant_id") || "";
 
   // The text you want the Assistant to respond to (your “user” message)
