@@ -1,63 +1,58 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Live Text</title>
+  <meta charset="UTF-8">
+  <title>Streaming Test</title>
   <style>
-    @font-face {
-      font-family: "InstallationFace";
-      src: url("/fonts/YourFont.woff2") format("woff2");
-    }
-    html, body { height: 100%; margin: 0; }
     body {
-      background: #000; color: #fff;
-      display: grid; place-items: center;
-      font-family: "InstallationFace", sans-serif;
-    }
-    .line {
-      font-size: clamp(28px, 6vw, 120px);
+      font-family: sans-serif;
+      padding: 2rem;
+      background: black;
+      color: lime;
+      font-size: 1.2rem;
       white-space: pre-wrap;
-      text-align: center;
-      max-width: 90vw;
     }
-    .cursor::after { content: "▌"; animation: blink 1s step-end infinite; }
-    @keyframes blink { 50% { opacity: 0; } }
+    #output::after {
+      content: "▋"; /* blinking cursor */
+      animation: blink 1s infinite;
+    }
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
   </style>
 </head>
 <body>
-  <div id="out" class="line cursor"></div>
-<script>
-  const prompt = "Give me a single haunting line about the wind.";
-  const out = document.getElementById("out");
-  const es = new EventSource(`/stream?prompt=${encodeURIComponent(prompt)}`);
+  <div id="output"></div>
 
-  // 1) Handle default 'message' events (in case your function normalizes later)
-  es.onmessage = (e) => {
-    if (e.data === "[DONE]") { es.close(); out.classList.remove("cursor"); return; }
-    try {
-      const msg = JSON.parse(e.data);
-      if (typeof msg.delta === "string") out.textContent += msg.delta;  // our normalized format
-      if (msg.error) out.textContent += `\n[error] ${msg.error}`;
-    } catch {}
-  };
+  <script>
+    const output = document.getElementById("output");
 
-  // 2) Handle OpenAI's named events directly (what you're seeing now)
-  es.addEventListener("response.output_text.delta", (e) => {
-    const msg = JSON.parse(e.data);
-    if (typeof msg.delta === "string") out.textContent += msg.delta;
-  });
+    // Change this URL if your function path is different
+    const url = "/stream?prompt=hello";
 
-  es.addEventListener("response.completed", () => {
-    es.close();
-    out.classList.remove("cursor");
-  });
+    const evtSource = new EventSource(url);
 
-  // Optional: show other messages for debugging
-  es.addEventListener("response.created", (e) => console.log("created", e.data));
-  es.addEventListener("response.in_progress", (e) => console.log("progress", e.data));
-  es.addEventListener("response.output_text.done", (e) => console.log("done", e.data));
+    evtSource.addEventListener("message", (event) => {
+      try {
+        const data = JSON.parse(event.data);
 
-  es.onerror = () => { out.classList.remove("cursor"); out.textContent += "\n[stream error]"; es.close(); };
-</script>
+        // Look for streaming chunks
+        if (data.delta) {
+          output.textContent += data.delta;
+        }
+
+        if (data.error) {
+          output.textContent += "\n[Error] " + data.error;
+        }
+
+      } catch (e) {
+        console.error("Parse error", e, event.data);
+      }
+    });
+
+    evtSource.addEventListener("error", (err) => {
+      console.error("EventSource failed:", err);
+    });
+  </script>
 </body>
 </html>
