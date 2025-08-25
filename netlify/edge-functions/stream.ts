@@ -1,23 +1,22 @@
 // netlify/edge-functions/stream.ts
-// Streams text using a model directly (fallback: no vector dataset)
+// Streams text using a model directly (fallback: no vector dataset).
+// Requires: OPENAI_API_KEY in your Netlify env.
 
 export default async (req: Request) => {
   const url = new URL(req.url);
 
   const key = Deno.env.get("OPENAI_API_KEY") || "";
-  const org = Deno.env.get("OPENAI_ORG_ID") || "";
+  const org = Deno.env.get("OPENAI_ORG_ID") || ""; // optional
   const prompt = url.searchParams.get("prompt") ?? "Say hello!";
 
   // Persona copied from your assistant:
   const systemInstruction = "answer in rhyme all the times";
-
-  // ✅ Use a Responses-compatible model
-  const model = "gpt-4.1"; // or "gpt-4o" / "gpt-4o-mini"
+  const model = "gpt-4.1"; // Responses-compatible (you can use "gpt-4o" or "gpt-4o-mini" too)
 
   const sse = (o: any) => `data: ${typeof o === "string" ? o : JSON.stringify(o)}\n\n`;
   const sseError = (msg: string) =>
     new Response(sse({ error: msg }) + sse("[DONE]"), {
-      headers: { "Content-Type": "text/event-stream" },
+      headers: { "Content-Type": "text/event-stream; charset=utf-8" },
     });
 
   if (!key) return sseError("Missing OPENAI_API_KEY");
@@ -73,7 +72,7 @@ export default async (req: Request) => {
 
   return new Response(body, {
     headers: {
-      "Content-Type": "text/event-stream",
+      "Content-Type": "text/event-stream; charset=utf-8", // 👈 fixes mojibake
       "Cache-Control": "no-cache, no-transform",
       "Connection": "keep-alive",
       "Access-Control-Allow-Origin": "*",
