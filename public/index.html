@@ -1,49 +1,84 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Live Text</title>
-  <style>
-    @font-face {
-      font-family: "InstallationFace";
-      src: url("/fonts/YourFont.woff2") format("woff2");
-    }
-    html, body { height: 100%; margin: 0; }
-    body {
-      background: #000; color: #fff;
-      display: grid; place-items: center;
-      font-family: "InstallationFace", sans-serif;
-    }
-    .line {
-      font-size: clamp(28px, 6vw, 120px);
-      white-space: pre-wrap;
-      text-align: center;
-      max-width: 90vw;
-    }
-    .cursor::after { content: "▌"; animation: blink 1s step-end infinite; }
-    @keyframes blink { 50% { opacity: 0; } }
-  </style>
-</head>
-<body>
-  <div id="out" class="line cursor"></div>
-  <script>
-    const prompt = "Give me a single haunting line about the wind.";
-    const out = document.getElementById("out");
-    const es = new EventSource(`/stream?prompt=${encodeURIComponent(prompt)}`);
+// netlify/edge-functions/stream.ts
+// Streams text using a model directly (fallback: no vector dataset)
 
-    es.onmessage = (e) => {
-      if (e.data === "[DONE]") { es.close(); out.classList.remove("cursor"); return; }
+export default async (req: Request) => {
+  const url = new URL(req.url);
+
+  const key = Deno.env.get("OPENAI_API_KEY") || "";
+  const org = Deno.env.get("OPENAI_ORG_ID") || "";
+  const prompt = url.searchParams.get("prompt") ?? "Say hello!";
+
+  // Persona copied from your assistant:
+  const systemInstruction = "answer in rhyme all the times";
+
+  // ✅ Use a Responses-compatible model
+  const model = "gpt-4.1"; // or "gpt-4o" / "gpt-4o-mini"
+
+  const sse = (o: any) => `data: ${typeof o === "string" ? o : JSON.stringify(o)}\n\n`;
+  const sseError = (msg: string) =>
+    new Response(sse({ error: msg }) + sse("[DONE]"), {
+      headers: { "Content-Type": "text/event-stream" },
+    });
+
+  if (!key) return sseError("Missing OPENAI_API_KEY");
+
+  const headers: Record<string, string> = {
+    "Authorization": `Bearer ${key}`,
+    "Content-Type": "application/json",
+  };
+  if (org) headers["OpenAI-Organization"] = org;
+
+  let upstream: Response;
+  try {
+    upstream = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        input: [
+          { role: "system", content: systemInstruction },
+          { role: "user", content: prompt }
+        ],
+        stream: true,
+      }),
+    });
+  } catch (e) {
+    return sseError(`Network error: ${String(e)}`);
+  }
+
+  if (!upstream.ok || !upstream.body) {
+    const text = await upstream.text().catch(() => "");
+    return sseError(`Upstream error ${upstream.status}: ${text}`);
+  }
+
+  const body = new ReadableStream({
+    async start(controller) {
+      const reader = upstream.body!.getReader();
+      const enc = new TextEncoder();
       try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "response.output_text.delta" && typeof msg.delta === "string") {
-          out.textContent += msg.delta;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
         }
-        if (msg.type === "response.completed") {
-          es.close();
-          out.classList.remove("cursor");
-        }
-      } catch {}
-    };
-  </script>
-</body>
-</html>
+        controller.enqueue(enc.encode(sse("[DONE]")));
+      } catch (e) {
+        controller.enqueue(enc.encode(sse({ error: String(e) })));
+        controller.enqueue(enc.encode(sse("[DONE]")));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+};
+
+export const config = { path: "/stream" };
