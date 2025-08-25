@@ -19,12 +19,17 @@ export default async (req: Request) => {
   if (!key) return sseError("Missing OPENAI_API_KEY");
   if (!assistantId) return sseError("Missing ASSISTANT_ID");
 
+  // Force the beta header through in multiple casings
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${key}`,
     "Content-Type": "application/json",
-    "OpenAI-Beta": "assistants=v2",   // 👈 this is the crucial part
+    "OpenAI-Beta": "assistants=v2",
+    "openai-beta": "assistants=v2",   // 👈 duplicate
   };
-  if (org) headers["OpenAI-Organization"] = org;
+  if (org) {
+    headers["OpenAI-Organization"] = org;
+    headers["openai-organization"] = org;
+  }
 
   let upstream: Response;
   try {
@@ -77,3 +82,4 @@ export default async (req: Request) => {
 };
 
 export const config = { path: "/stream" };
+
