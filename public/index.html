@@ -1,37 +1,104 @@
-<script>
-  const prompt = "Give me a single haunting line about the wind.";
-  const out = document.getElementById("out");
-  const es = new EventSource(`/stream?prompt=${encodeURIComponent(prompt)}`);
-
-  // 1) Handle OpenAI's named events (what you're getting now)
-  es.addEventListener("response.output_text.delta", (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (typeof msg.delta === "string") out.textContent += msg.delta;
-    } catch {}
-  });
-
-  es.addEventListener("response.completed", () => {
-    es.close();
-    out.classList.remove("cursor");
-  });
-
-  // 2) Also handle default 'message' in case you later normalize the stream
-  es.onmessage = (e) => {
-    if (e.data === "[DONE]") { es.close(); out.classList.remove("cursor"); return; }
-    try {
-      const msg = JSON.parse(e.data);
-      // If server ever sends plain { delta: "..." }
-      if (typeof msg.delta === "string") out.textContent += msg.delta;
-      if (msg.error) out.textContent += `\n[error] ${msg.error}`;
-    } catch {
-      // Non-JSON lines (rare)
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Live Text</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    @font-face {
+      font-family: "InstallationFace";
+      src: url("/fonts/YourFont.woff2") format("woff2");
+      font-display: swap;
     }
-  };
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: #000; color: #fff;
+      display: grid; place-items: center;
+      font-family: "InstallationFace", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .line {
+      font-size: clamp(28px, 6vw, 120px);
+      white-space: pre-wrap;
+      text-align: center;
+      max-width: 90vw;
+      line-height: 1.15;
+    }
+    .cursor::after { content: "▌"; animation: blink 1s step-end infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    .controls {
+      position: fixed; inset: auto 1rem 1rem 1rem;
+      display: flex; gap: .5rem; justify-content: center;
+      font-size: 16px;
+    }
+    input, button {
+      background: #111; color: #fff; border: 1px solid #333;
+      padding: .6rem .8rem; border-radius: .5rem;
+    }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="out" class="line cursor"></div>
 
-  es.onerror = () => {
-    out.classList.remove("cursor");
-    out.textContent += "\n[stream error]";
-    es.close();
-  };
-</script>
+  <div class="controls">
+    <input id="q" placeholder="Type a prompt…" size="40" />
+    <button id="go">Stream</button>
+  </div>
+
+  <script>
+    const out = document.getElementById("out");
+    const q   = document.getElementById("q");
+    const go  = document.getElementById("go");
+
+    function startStream(prompt) {
+      out.textContent = "";               // clear previous
+      out.classList.add("cursor");
+
+      const es = new EventSource(`/stream?prompt=${encodeURIComponent(prompt)}`);
+
+      // OpenAI named events (most important)
+      es.addEventListener("response.output_text.delta", (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (typeof msg.delta === "string") out.textContent += msg.delta;
+        } catch {}
+      });
+
+      es.addEventListener("response.completed", () => {
+        es.close();
+        out.classList.remove("cursor");
+      });
+
+      // Fallback for generic messages or server errors
+      es.onmessage = (e) => {
+        if (e.data === "[DONE]") { es.close(); out.classList.remove("cursor"); return; }
+        try {
+          const msg = JSON.parse(e.data);
+          if (typeof msg.delta === "string") out.textContent += msg.delta;
+          if (msg.error) out.textContent += `\n[error] ${msg.error}`;
+        } catch {}
+      };
+
+      es.onerror = () => {
+        out.classList.remove("cursor");
+        out.textContent += "\n[stream error]";
+        es.close();
+      };
+    }
+
+    // Initial line (auto)
+    startStream("Give me a single haunting line about the wind.");
+
+    // UI
+    go.addEventListener("click", () => {
+      const prompt = q.value.trim() || "Say hello!";
+      startStream(prompt);
+      q.blur();
+    });
+    q.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") go.click();
+    });
+  </script>
+</body>
+</html>
+
