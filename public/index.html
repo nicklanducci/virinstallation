@@ -1,58 +1,49 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>Streaming Test</title>
+  <meta charset="utf-8" />
+  <title>Live Text</title>
   <style>
+    @font-face {
+      font-family: "InstallationFace";
+      src: url("/fonts/YourFont.woff2") format("woff2");
+    }
+    html, body { height: 100%; margin: 0; }
     body {
-      font-family: sans-serif;
-      padding: 2rem;
-      background: black;
-      color: lime;
-      font-size: 1.2rem;
+      background: #000; color: #fff;
+      display: grid; place-items: center;
+      font-family: "InstallationFace", sans-serif;
+    }
+    .line {
+      font-size: clamp(28px, 6vw, 120px);
       white-space: pre-wrap;
+      text-align: center;
+      max-width: 90vw;
     }
-    #output::after {
-      content: "▋"; /* blinking cursor */
-      animation: blink 1s infinite;
-    }
-    @keyframes blink {
-      50% { opacity: 0; }
-    }
+    .cursor::after { content: "▌"; animation: blink 1s step-end infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
   </style>
 </head>
 <body>
-  <div id="output"></div>
-
+  <div id="out" class="line cursor"></div>
   <script>
-    const output = document.getElementById("output");
+    const prompt = "Give me a single haunting line about the wind.";
+    const out = document.getElementById("out");
+    const es = new EventSource(`/stream?prompt=${encodeURIComponent(prompt)}`);
 
-    // Change this URL if your function path is different
-    const url = "/stream?prompt=hello";
-
-    const evtSource = new EventSource(url);
-
-    evtSource.addEventListener("message", (event) => {
+    es.onmessage = (e) => {
+      if (e.data === "[DONE]") { es.close(); out.classList.remove("cursor"); return; }
       try {
-        const data = JSON.parse(event.data);
-
-        // Look for streaming chunks
-        if (data.delta) {
-          output.textContent += data.delta;
+        const msg = JSON.parse(e.data);
+        if (msg.type === "response.output_text.delta" && typeof msg.delta === "string") {
+          out.textContent += msg.delta;
         }
-
-        if (data.error) {
-          output.textContent += "\n[Error] " + data.error;
+        if (msg.type === "response.completed") {
+          es.close();
+          out.classList.remove("cursor");
         }
-
-      } catch (e) {
-        console.error("Parse error", e, event.data);
-      }
-    });
-
-    evtSource.addEventListener("error", (err) => {
-      console.error("EventSource failed:", err);
-    });
+      } catch {}
+    };
   </script>
 </body>
 </html>
