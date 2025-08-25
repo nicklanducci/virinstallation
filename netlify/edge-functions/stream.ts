@@ -1,11 +1,9 @@
 // netlify/edge-functions/stream.ts
-// Streams text from an Assistant (Assistants v2 API, threads/stream)
-
 export default async (req: Request) => {
   const url = new URL(req.url);
 
-  const key = Deno.env.get("OPENAI_API_KEY") || "";     // sk-proj-...
-  const org = Deno.env.get("OPENAI_ORG_ID") || "";      // optional
+  const key = Deno.env.get("OPENAI_API_KEY") || "";
+  const org = Deno.env.get("OPENAI_ORG_ID") || "";
   const assistantId =
     Deno.env.get("ASSISTANT_ID") ||
     url.searchParams.get("assistant_id") ||
@@ -21,23 +19,22 @@ export default async (req: Request) => {
   if (!key) return sseError("Missing OPENAI_API_KEY");
   if (!assistantId) return sseError("Missing ASSISTANT_ID");
 
-  // ✅ Headers for Assistants v2
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${key}`,
     "Content-Type": "application/json",
-    "OpenAI-Beta": "assistants=v2",
+    "OpenAI-Beta": "assistants=v2",   // 👈 this is the crucial part
   };
   if (org) headers["OpenAI-Organization"] = org;
 
-  // 🔗 Call threads/stream (create + run + stream in one)
   let upstream: Response;
   try {
-    upstream = await fetch("https://api.openai.com/v1/threads/stream", {
+    upstream = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers,
       body: JSON.stringify({
         assistant_id: assistantId,
         input: [{ role: "user", content: prompt }],
+        stream: true,
       }),
     });
   } catch (e) {
@@ -49,7 +46,6 @@ export default async (req: Request) => {
     return sseError(`Upstream error ${upstream.status}: ${text}`);
   }
 
-  // 🔄 Pass through OpenAI’s SSE
   const body = new ReadableStream({
     async start(controller) {
       const reader = upstream.body!.getReader();
