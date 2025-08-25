@@ -1,18 +1,18 @@
 // netlify/edge-functions/stream.ts
-// Streams text using the assistant's underlying model + injected instruction.
-// Works immediately even if the old assistant_id fails.
+// Streams text using a model directly (fallback: no vector dataset)
 
 export default async (req: Request) => {
   const url = new URL(req.url);
 
-  const key = Deno.env.get("OPENAI_API_KEY") || "";      // sk-proj-... (recommended) or other
-  const org = Deno.env.get("OPENAI_ORG_ID") || "";       // optional
+  const key = Deno.env.get("OPENAI_API_KEY") || "";
+  const org = Deno.env.get("OPENAI_ORG_ID") || "";
   const prompt = url.searchParams.get("prompt") ?? "Say hello!";
 
-  // If you later recreate your Assistant on a modern model (e.g. gpt-4o-mini),
-  // you can switch back to assistant_id. For now we copy its instruction+model.
-  const assistantInstruction = "answer in rhyme all the times";
-  const assistantModel = "gpt-4-0613"; // from your assistant definition
+  // Persona copied from your assistant:
+  const systemInstruction = "answer in rhyme all the times";
+
+  // ✅ Use a Responses-compatible model
+  const model = "gpt-4.1"; // or "gpt-4o" / "gpt-4o-mini"
 
   const sse = (o: any) => `data: ${typeof o === "string" ? o : JSON.stringify(o)}\n\n`;
   const sseError = (msg: string) =>
@@ -28,16 +28,15 @@ export default async (req: Request) => {
   };
   if (org) headers["OpenAI-Organization"] = org;
 
-  // ✅ Call the model directly, inject the assistant’s behavior as a system message
   let upstream: Response;
   try {
     upstream = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: assistantModel, // <-- direct model call avoids the 'model missing' issue
+        model,
         input: [
-          { role: "system", content: assistantInstruction },
+          { role: "system", content: systemInstruction },
           { role: "user", content: prompt }
         ],
         stream: true,
