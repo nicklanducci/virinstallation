@@ -1,5 +1,5 @@
 // netlify/edge-functions/stream.ts
-// Streams text from an Assistant using Assistants v2 threads API
+// Streams text from an Assistant (Assistants v2 API, threads/stream)
 
 export default async (req: Request) => {
   const url = new URL(req.url);
@@ -21,18 +21,18 @@ export default async (req: Request) => {
   if (!key) return sseError("Missing OPENAI_API_KEY");
   if (!assistantId) return sseError("Missing ASSISTANT_ID");
 
-  // ✅ Correct headers
+  // ✅ Headers for Assistants v2
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${key}`,
     "Content-Type": "application/json",
-    "OpenAI-Beta": "assistants=v2",   // absolutely required
+    "OpenAI-Beta": "assistants=v2",
   };
   if (org) headers["OpenAI-Organization"] = org;
 
-  // 🔗 Call Assistants v2 thread run stream
+  // 🔗 Call threads/stream (create + run + stream in one)
   let upstream: Response;
   try {
-    upstream = await fetch("https://api.openai.com/v1/threads/runs/stream", {
+    upstream = await fetch("https://api.openai.com/v1/threads/stream", {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -49,7 +49,7 @@ export default async (req: Request) => {
     return sseError(`Upstream error ${upstream.status}: ${text}`);
   }
 
-  // 🔄 Pipe SSE straight through
+  // 🔄 Pass through OpenAI’s SSE
   const body = new ReadableStream({
     async start(controller) {
       const reader = upstream.body!.getReader();
