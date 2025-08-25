@@ -6,10 +6,10 @@ export default async (req: Request) => {
 
   const key = Deno.env.get("OPENAI_API_KEY") || "";
   const org = Deno.env.get("OPENAI_ORG_ID") || "";
-  const prompt = url.searchParams.get("prompt") ?? "Say hello!";
+  const prompt = url.searchParams.get("prompt") ?? "Say someething about love";
 
   // Hardcode your assistant’s “persona” here:
-  const systemInstruction = "answer in rhyme all the times";
+  const systemInstruction = "act as a poet and answer in rhyme all the times";
 
   const sse = (o: any) => `data: ${typeof o === "string" ? o : JSON.stringify(o)}\n\n`;
   const sseError = (msg: string) =>
