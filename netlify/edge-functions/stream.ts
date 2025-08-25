@@ -10,7 +10,7 @@ export default async (req: Request) => {
   const prompt = url.searchParams.get("prompt") ?? "Say something about love!";
 
   // Persona copied from your assistant:
-  const systemInstruction = "act as a poeet and answer in rhyme all the times";
+  const systemInstruction = "act as a poet and answer in rhyme all the times";
   const model = "gpt-4.1"; // Responses-compatible (you can use "gpt-4o" or "gpt-4o-mini" too)
 
   const sse = (o: any) => `data: ${typeof o === "string" ? o : JSON.stringify(o)}\n\n`;
