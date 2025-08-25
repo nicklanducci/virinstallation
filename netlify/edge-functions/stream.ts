@@ -1,112 +1,107 @@
 // netlify/edge-functions/stream.ts
+// TEMP: Assistant visibility checker (non-streaming, returns JSON)
+
 export default async (req: Request) => {
   const url = new URL(req.url);
 
-  // ---- ENV ----
-  const key = Deno.env.get("OPENAI_API_KEY") || "";      // sk-proj-...
-  const project = Deno.env.get("OPENAI_PROJECT") || "";  // proj_...
-  const org = Deno.env.get("OPENAI_ORG_ID") || "";       // optional
-  const assistantId =
-    Deno.env.get("ASSISTANT_ID") ||
-    url.searchParams.get("assistant_id") ||
-    "";
-  const prompt = url.searchParams.get("prompt") ?? "Say hello!";
+  // 🔑 Env you should have set in Netlify → Site configuration → Environment variables
+  // - OPENAI_API_KEY  : your key (prefer sk-proj-... from the SAME Project as the assistant)
+  // - OPENAI_PROJECT  : proj_... (REQUIRED if your key is NOT sk-proj-...; optional if sk-proj-)
+  // - OPENAI_ORG_ID   : org_... (optional; only if you’re in a Team/Org)
+  // - ASSISTANT_ID    : asst_... (optional; can also pass via ?assistant_id=...)
+  const key       = Deno.env.get("OPENAI_API_KEY")  || "";
+  const project   = Deno.env.get("OPENAI_PROJECT")  || "";
+  const org       = Deno.env.get("OPENAI_ORG_ID")   || "";
+  const assistant = url.searchParams.get("assistant_id")
+                 || Deno.env.get("ASSISTANT_ID")
+                 || "";
 
-  // ---- SSE helpers ----
-  const sse = (obj: unknown) =>
-    `data: ${typeof obj === "string" ? obj : JSON.stringify(obj)}\n\n`;
-  const sseError = (msg: string, status = 200) =>
-    new Response(sse({ error: msg }) + sse("[DONE]"), {
-      headers: { "Content-Type": "text/event-stream" },
-      status,
-    });
-
-  // ---- Guards ----
-  if (!key) return sseError("Missing OPENAI_API_KEY (use a project key: sk-proj-...)");
-  if (!assistantId) return sseError("Missing ASSISTANT_ID (env or ?assistant_id=asst_...)");
-  if (!project) return sseError("Missing OPENAI_PROJECT (proj_...) — set it to the Project that owns the assistant");
-
-  // ---- Common headers (Assistants v2 + explicit project context) ----
+  // Build headers exactly as we will for Assistants v2 calls
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${key}`,
     "Content-Type": "application/json",
     "OpenAI-Beta": "assistants=v2",
-    "OpenAI-Project": project,     // 👈 make the request run in the right project
   };
-  if (org) headers["OpenAI-Organization"] = org;
+  if (project) headers["OpenAI-Project"] = project;       // needed for non sk-proj- keys
+  if (org)     headers["OpenAI-Organization"] = org;      // optional
 
-  // ---- 1) VERIFY the assistant is visible in THIS project ----
+  // Helper to safely parse JSON bodies
+  const safeParse = (t: string) => { try { return JSON.parse(t); } catch { return t; } };
+
+  // Basic validation
+  if (!key) {
+    return json({
+      ok: false,
+      error: "Missing OPENAI_API_KEY",
+      hint: "Use a project key sk-proj-... from the SAME Project as the assistant, or set OPENAI_PROJECT for non-project keys.",
+    });
+  }
+  if (!assistant) {
+    return json({
+      ok: false,
+      error: "Missing assistant_id",
+      hint: "Pass ?assistant_id=asst_... in the URL or set ASSISTANT_ID in env.",
+    });
+  }
+
+  // Call Assistants GET to verify visibility in this context
+  let resp: Response;
+  let text = "";
   try {
-    const check = await fetch(`https://api.openai.com/v1/assistants/${assistantId}`, {
+    resp = await fetch(`https://api.openai.com/v1/assistants/${assistant}`, {
       method: "GET",
       headers,
     });
-
-    if (!check.ok) {
-      const body = await check.text().catch(() => "");
-      return sseError(
-        `Assistant check failed for ${assistantId}. status=${check.status}. ` +
-        `Hint: The assistant may not belong to Project ${project} or your key is from a different project. ` +
-        `Body=${body || "no body"}`
-      );
-    }
+    text = await resp.text().catch(() => "");
   } catch (e) {
-    return sseError(`Network error checking assistant: ${String(e)}`);
-  }
-
-  // ---- 2) STREAM from that assistant via /v1/responses ----
-  let upstream: Response;
-  try {
-    upstream = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        assistant_id: assistantId,
-        input: [{ role: "user", content: prompt }],
-        stream: true,
-      }),
+    return json({
+      ok: false,
+      step: "assistant_check_fetch",
+      error: String(e),
+      sent_headers: redactHeaders(headers),
+      key_prefix: key.slice(0, 12),
     });
-  } catch (e) {
-    return sseError(`Network error calling /v1/responses: ${String(e)}`);
   }
 
-  if (!upstream.ok || !upstream.body) {
-    const text = await upstream.text().catch(() => "");
-    return new Response(
-      sse({ upstream_status: upstream.status, error: text || "Upstream error" }) + sse("[DONE]"),
-      { headers: { "Content-Type": "text/event-stream" } }
-    );
-  }
-
-  // ---- 3) Pass through SSE and append [DONE] ----
-  const body = new ReadableStream({
-    async start(controller) {
-      const reader = upstream.body!.getReader();
-      const encoder = new TextEncoder();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          controller.enqueue(value);
-        }
-        controller.enqueue(encoder.encode(sse("[DONE]")));
-      } catch (e) {
-        controller.enqueue(encoder.encode(sse({ error: `Stream read error: ${String(e)}` })));
-        controller.enqueue(encoder.encode(sse("[DONE]")));
-      } finally {
-        controller.close();
-      }
-    },
-  });
-
-  return new Response(body, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      "Connection": "keep-alive",
-      "Access-Control-Allow-Origin": "*",
-    },
+  // Return diagnostic info
+  return json({
+    ok: resp.ok,
+    step: "assistant_check_result",
+    status: resp.status,
+    key_prefix: key.slice(0, 12),            // e.g., "sk-proj-xxxxx"
+    sent_headers: redactHeaders(headers),    // shows which headers we actually sent
+    notes: [
+      "If status is 200, your key/project can SEE the assistant.",
+      "If status is 403/404, the key/project cannot see this assistant. Use a sk-proj key from the SAME Project, or set OPENAI_PROJECT to proj_... that owns the assistant."
+    ],
+    assistant_raw: safeParse(text),
+    next_steps: resp.ok ? [
+      "✅ Replace this checker with the streaming version once you confirm visibility.",
+      "In the streaming file, POST /v1/responses with the SAME headers and body: { assistant_id, input, stream:true }.",
+    ] : [
+      "❌ Fix key/project mismatch:",
+      "- Create a Project key (sk-proj-...) in the SAME Project as the assistant (Playground → Project → Settings → API Keys).",
+      "- OR, if using a service/global key, also set OPENAI_PROJECT=proj_... and keep the OpenAI-Project header.",
+    ],
   });
 };
 
+// Utility: return JSON with proper headers
+function json(obj: unknown, status = 200) {
+  return new Response(JSON.stringify(obj, null, 2), {
+    status,
+    headers: { "Content-Type": "application/json" }
+  });
+}
+
+// Redact sensitive header values for display
+function redactHeaders(h: Record<string, string>) {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(h)) {
+    out[k] = k.toLowerCase() === "authorization" ? v.slice(0, 16) + "…" : v;
+  }
+  return out;
+}
+
 export const config = { path: "/stream" };
+
